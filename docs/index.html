@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>現在時刻とテキスト表示・動画切り替え</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    .clock-font {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* contenteditable用プレースホルダーのスタイル */
+    [contenteditable]:empty:before {
+      content: attr(placeholder);
+      color: #64748b;
+      pointer-events: none;
+      display: block;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col justify-center items-center p-4 relative overflow-x-hidden">
+
+  <!-- 画面右上のフルスクリーン切り替えボタン -->
+  <button onclick="toggleFullScreen()" class="absolute top-4 right-4 z-20 px-3 py-2 bg-slate-800/80 hover:bg-slate-700 backdrop-blur-md border border-slate-700/60 rounded-xl text-xs font-medium text-slate-300 transition shadow-lg flex items-center gap-1.5 active:scale-95">
+    <span>⛶</span> フルスクリーン
+  </button>
+
+  <!-- 最前面の動画オーバーレイエリア（初期状態は非表示） -->
+  <div id="video-overlay" class="fixed inset-0 z-50 bg-black/95 hidden flex-col justify-center items-center p-4 transition-opacity duration-300">
+    <!-- 動画本体 -->
+    <video id="fg-video" playsinline class="max-w-full max-h-[80vh] rounded-2xl shadow-2xl border border-slate-700/50 bg-black">
+      <source id="video-source" src="" type="video/mp4">
+    </video>
+
+    <!-- 操作コントロールバー -->
+    <div class="mt-6 flex flex-wrap justify-center items-center gap-3 md:gap-4 bg-slate-800/90 backdrop-blur-md px-6 py-3 rounded-2xl border border-slate-700 shadow-xl">
+      <!-- 巻き戻し（10秒戻る） -->
+      <button onclick="rewindVideo()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-medium transition active:scale-95 flex items-center gap-1.5">
+        <span>⏪</span> 10秒戻す
+      </button>
+
+      <!-- 一時停止 / 再生 -->
+      <button id="play-pause-btn" onclick="togglePlayPause()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-sm font-bold transition active:scale-95 flex items-center gap-1.5 min-w-[115px] justify-center">
+        <span>▶️</span> 再生
+      </button>
+
+      <!-- 終了（閉じる） -->
+      <button onclick="closeVideo()" class="px-4 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl text-sm font-bold transition active:scale-95 flex items-center gap-1.5">
+        <span>✖️</span> 終了
+      </button>
+    </div>
+  </div>
+
+  <!-- メインコンテンツ領域 -->
+  <main class="w-full max-w-3xl flex flex-col items-center text-center z-10 space-y-6 my-auto">
+
+    <!-- 日付表示 -->
+    <div id="date" class="text-slate-400 text-lg md:text-2xl font-light tracking-wide">
+      ----年--月--日 (ー)
+    </div>
+
+    <!-- 時刻表示（画面真ん中に大きく配置） -->
+    <div class="bg-slate-800/60 backdrop-blur-md border border-slate-700/50 rounded-3xl p-6 md:p-12 shadow-2xl w-full">
+      <div id="clock" class="clock-font text-5xl sm:text-7xl md:text-8xl font-bold tracking-tight text-white drop-shadow-md">
+        00:00:00
+      </div>
+    </div>
+
+    <!-- 下部の入力可能エリア（太字・色変更対応） -->
+    <div class="w-full bg-slate-800/50 backdrop-blur-md border border-slate-700/40 rounded-2xl p-6 shadow-lg text-left">
+      <div class="flex justify-between items-center mb-2">
+        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          メッセージ / メモ (文字の太さや色を変更できます)
+        </label>
+        <!-- 編集ツールバー -->
+        <div class="flex items-center gap-2">
+          <!-- 太字ボタン -->
+          <button type="button" onclick="formatText('bold')" class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 active:scale-95 rounded text-xs font-bold transition shadow" title="太字にする">B</button>
+          <!-- 文字色変更カラーピッカー -->
+          <div class="flex items-center gap-1 bg-slate-700 px-2 py-1 rounded shadow text-xs">
+            <span>色:</span>
+            <input type="color" id="text-color-picker" onchange="changeTextColor(this.value)" value="#ffffff" class="w-5 h-5 rounded cursor-pointer bg-transparent border-0" title="文字色を変更">
+          </div>
+        </div>
+      </div>
+      <!-- リッチテキスト入力エリア -->
+      <div id="user-text" contenteditable="true" class="w-full min-h-[90px] bg-slate-900/60 text-slate-100 text-base md:text-lg border border-slate-700 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 overflow-y-auto" placeholder="ここにテキストを入力してください..."></div>
+    </div>
+
+    <!-- 曜日選択ボタンエリア -->
+    <div class="w-full bg-slate-800/40 backdrop-blur-md border border-slate-700/30 rounded-2xl p-4 shadow-lg">
+      <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">曜日別動画再生（最前面表示）</p>
+      <div class="flex flex-wrap justify-center gap-2 md:gap-3">
+        <button onclick="openVideo('monday')" class="day-btn px-4 py-2 bg-slate-700/80 hover:bg-indigo-600 focus:bg-indigo-600 rounded-xl text-sm font-medium transition-all shadow active:scale-95">月曜日</button>
+        <button onclick="openVideo('tuesday')" class="day-btn px-4 py-2 bg-slate-700/80 hover:bg-indigo-600 focus:bg-indigo-600 rounded-xl text-sm font-medium transition-all shadow active:scale-95">火曜日</button>
+        <button onclick="openVideo('wednesday')" class="day-btn px-4 py-2 bg-slate-700/80 hover:bg-indigo-600 focus:bg-indigo-600 rounded-xl text-sm font-medium transition-all shadow active:scale-95">水曜日</button>
+        <button onclick="openVideo('thursday')" class="day-btn px-4 py-2 bg-slate-700/80 hover:bg-indigo-600 focus:bg-indigo-600 rounded-xl text-sm font-medium transition-all shadow active:scale-95">木曜日</button>
+        <button onclick="openVideo('friday')" class="day-btn px-4 py-2 bg-slate-700/80 hover:bg-indigo-600 focus:bg-indigo-600 rounded-xl text-sm font-medium transition-all shadow active:scale-95">金曜日</button>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    // 時計を更新する関数
+    function updateClock() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const date = String(now.getDate()).padStart(2, '0');
+      const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+      const day = dayNames[now.getDay()];
+
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+
+      document.getElementById('date').textContent = `${year}年${month}月${date}日 (${day})`;
+      document.getElementById('clock').textContent = `${hours}:${minutes}:${seconds}`;
+    }
+
+    // 1秒ごとに時計を更新
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // フルスクリーン切り替え関数
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.log("フルスクリーンエラー:", err);
+        });
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
+
+    // テキスト装飾用関数（太字など）
+    function formatText(command) {
+      document.execCommand(command, false, null);
+      document.getElementById('user-text').focus();
+    }
+
+    // 文字色変更関数
+    function changeTextColor(color) {
+      document.execCommand('foreColor', false, color);
+      document.getElementById('user-text').focus();
+    }
+
+    // 曜日ごとの動画ファイル一覧
+    const videoMap = {
+      monday: 'monday.mp4',
+      tuesday: 'tuesday.mp4',
+      wednesday: 'wednesday.mp4',
+      thursday: 'thursday.mp4',
+      friday: 'friday.mp4'
+    };
+
+    const overlay = document.getElementById('video-overlay');
+    const video = document.getElementById('fg-video');
+    const source = document.getElementById('video-source');
+    const playPauseBtn = document.getElementById('play-pause-btn');
+
+    // 動画を開く関数（再生はせず待機状態にする）
+    function openVideo(day) {
+      const videoUrl = videoMap[day];
+      if (!videoUrl) return;
+
+      source.src = videoUrl;
+      video.load();
+
+      // オーバーレイを最前面に表示
+      overlay.classList.remove('hidden');
+      overlay.classList.add('flex');
+
+      // 再生はせず、一時停止（停止）状態で待機し、ボタンを「再生」表示にする
+      video.pause();
+      updatePlayPauseButton(false);
+    }
+
+    // 一時停止 / 再生を切り替える関数
+    function togglePlayPause() {
+      if (video.paused || video.ended) {
+        video.play().then(() => {
+          updatePlayPauseButton(true);
+        }).catch(err => {
+          console.log("再生エラー:", err);
+        });
+      } else {
+        video.pause();
+        updatePlayPauseButton(false);
+      }
+    }
+
+    // ボタンの見た目を更新する関数
+    function updatePlayPauseButton(isPlaying) {
+      if (isPlaying) {
+        playPauseBtn.innerHTML = '<span>⏸️</span> 一時停止';
+      } else {
+        playPauseBtn.innerHTML = '<span>▶️</span> 再生';
+      }
+    }
+
+    // 10秒巻き戻す関数
+    function rewindVideo() {
+      video.currentTime = Math.max(0, video.currentTime - 10);
+    }
+
+    // 動画を終了して時計画面に戻る関数
+    function closeVideo() {
+      video.pause();
+      video.currentTime = 0;
+      overlay.classList.add('hidden');
+      overlay.classList.remove('flex');
+    }
+
+    // 動画が最後まで再生し終わった時の処理
+    video.addEventListener('ended', () => {
+      updatePlayPauseButton(false);
+    });
+
+    // キーボードのEscキーでも終了できるようにする
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+        closeVideo();
+      }
+    });
+  </script>
+</body>
+</html>
